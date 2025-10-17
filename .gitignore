@@ -48,3 +48,5 @@ gradlew.bat
 # Application config
 config/local.properties
 config/*.local.*
+build.bat
+lan.bat
