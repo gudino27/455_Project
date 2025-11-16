@@ -1,17 +1,22 @@
 package network.lan;
 
+import api.ConnectionMode;
+import api.NetworkManager;
 import network.protocol.Message;
 import network.socket.SocketConnection;
 import network.socket.SocketServer;
 
 import java.io.IOException;
 import java.net.Socket;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.logging.Logger;
 
-public class LANManager implements AutoCloseable {
+public class LANManager implements NetworkManager {
     private static final Logger logger = Logger.getLogger(LANManager.class.getName());
 
     private final String peerId;
@@ -20,14 +25,16 @@ public class LANManager implements AutoCloseable {
     private final LANDiscovery discovery;
     private final Map<String, SocketConnection> connections;
     private final Map<String, PeerInfo> discoveredPeers;
-    private final CopyOnWriteArrayList<MessageListener> messageListeners;
+    private final CopyOnWriteArrayList<NetworkManager.MessageListener> messageListeners;
+    private final CopyOnWriteArrayList<NetworkManager.PeerConnectionListener> peerConnectionListeners;
 
-    public LANManager(String peerId, int port) throws IOException {
-        this.peerId = peerId;
+    public LANManager(int port) throws IOException {
+        this.peerId = "lan-" + UUID.randomUUID().toString().substring(0, 8);
         this.port = port;
         this.connections = new ConcurrentHashMap<>();
         this.discoveredPeers = new ConcurrentHashMap<>();
         this.messageListeners = new CopyOnWriteArrayList<>();
+        this.peerConnectionListeners = new CopyOnWriteArrayList<>();
 
         this.server = new SocketServer(port);
         this.server.setConnectionHandler(this::handleIncomingConnection);
@@ -36,19 +43,53 @@ public class LANManager implements AutoCloseable {
         this.discovery.addListener(this::handlePeerDiscovered);
     }
 
+    @Override
     public void start() {
         server.start();
         discovery.start();
         logger.info("LAN Manager started for peer " + peerId + " on port " + port);
     }
 
-    public void addMessageListener(MessageListener listener) {
+    @Override
+    public void stop() {
+        close();
+    }
+
+    @Override
+    public void connect(String address, int port) throws Exception {
+        PeerInfo peerInfo = new PeerInfo(address + ":" + port, address, port);
+        connectToPeer(peerInfo);
+    }
+
+    @Override
+    public void sendMessage(String peerId, String message) {
+        try {
+            sendTo(peerId, message);
+        } catch (IOException e) {
+            logger.warning("Failed to send message to " + peerId + ": " + e.getMessage());
+        }
+    }
+
+    @Override
+    public List<PeerInfo> getPeers() {
+        return new ArrayList<>(discoveredPeers.values());
+    }
+
+    @Override
+    public void setMessageListener(NetworkManager.MessageListener listener) {
         messageListeners.add(listener);
     }
 
-    public void removeMessageListener(MessageListener listener) {
-        messageListeners.remove(listener);
+    @Override
+    public void setPeerConnectionListener(NetworkManager.PeerConnectionListener listener) {
+        peerConnectionListeners.add(listener);
     }
+
+    @Override
+    public ConnectionMode getMode() {
+        return ConnectionMode.LAN;
+    }
+
 
     private void handleIncomingConnection(SocketConnection connection) {
         connection.setMessageHandler(new SocketConnection.MessageHandler() {
@@ -62,7 +103,8 @@ public class LANManager implements AutoCloseable {
                         logger.info("Handshake received from peer " + remotePeerId);
 
                         sendHandshakeResponse(conn);
-                    } else {
+                        notifyPeerConnected(remotePeerId, conn.getRemoteAddress());
+                    } else if (msg.getType() == Message.MessageType.TEXT) {
                         notifyMessageReceived((Message) message);
                     }
                 }
@@ -79,6 +121,7 @@ public class LANManager implements AutoCloseable {
                 if (disconnectedPeer != null) {
                     connections.remove(disconnectedPeer);
                     logger.info("Peer disconnected: " + disconnectedPeer);
+                    notifyPeerDisconnected(disconnectedPeer);
                 }
             }
         });
@@ -102,7 +145,10 @@ public class LANManager implements AutoCloseable {
                 @Override
                 public void onMessage(Object message, SocketConnection conn) {
                     if (message instanceof Message) {
-                        notifyMessageReceived((Message) message);
+                        Message msg = (Message) message;
+                        if (msg.getType() == Message.MessageType.TEXT) {
+                            notifyMessageReceived(msg);
+                        }
                     }
                 }
 
@@ -115,12 +161,14 @@ public class LANManager implements AutoCloseable {
                 public void onDisconnect(SocketConnection conn) {
                     connections.remove(peerInfo.getPeerId());
                     logger.info("Disconnected from peer: " + peerInfo.getPeerId());
+                    notifyPeerDisconnected(peerInfo.getPeerId());
                 }
             });
 
             sendHandshake(connection);
             connections.put(peerInfo.getPeerId(), connection);
             logger.info("Connected to peer: " + peerInfo.getPeerId());
+            notifyPeerConnected(peerInfo.getPeerId(), peerInfo.getAddress());
 
         } catch (IOException e) {
             logger.warning("Failed to connect to peer " + peerInfo.getPeerId() + ": " + e.getMessage());
@@ -167,11 +215,31 @@ public class LANManager implements AutoCloseable {
     }
 
     private void notifyMessageReceived(Message message) {
-        for (MessageListener listener : messageListeners) {
+        for (NetworkManager.MessageListener listener : messageListeners) {
             try {
-                listener.onMessageReceived(message);
+                listener.onMessageReceived(message.getSenderId(), message.getContent());
             } catch (Exception e) {
                 logger.warning("Error notifying message listener: " + e.getMessage());
+            }
+        }
+    }
+
+    private void notifyPeerConnected(String peerId, String address) {
+        for (NetworkManager.PeerConnectionListener listener : peerConnectionListeners) {
+            try {
+                listener.onPeerConnected(peerId, address);
+            } catch (Exception e) {
+                logger.warning("Error notifying peer connection listener: " + e.getMessage());
+            }
+        }
+    }
+
+    private void notifyPeerDisconnected(String peerId) {
+        for (NetworkManager.PeerConnectionListener listener : peerConnectionListeners) {
+            try {
+                listener.onPeerDisconnected(peerId);
+            } catch (Exception e) {
+                logger.warning("Error notifying peer disconnection listener: " + e.getMessage());
             }
         }
     }
@@ -209,9 +277,5 @@ public class LANManager implements AutoCloseable {
         }
 
         logger.info("LAN Manager stopped");
-    }
-
-    public interface MessageListener {
-        void onMessageReceived(Message message);
     }
 }

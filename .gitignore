@@ -50,3 +50,5 @@ config/local.properties
 config/*.local.*
 build.bat
 lan.bat
+src/main/java/network/p2p/RelayServer.java.tmp.40432.1762679119581
+src/main/java/util/NATDetector.java.tmp.40432.1762678850811

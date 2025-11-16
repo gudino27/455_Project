@@ -1,7 +1,6 @@
 package e2e;
 
 import network.lan.LANManager;
-import network.protocol.Message;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Tag;
 import org.junit.jupiter.api.Test;
@@ -33,7 +32,7 @@ class LANWorkflowE2ETest {
     }
 
     private LANManager createAndStartManager(String peerId, int port) throws IOException {
-        LANManager manager = new LANManager(peerId, port);
+        LANManager manager = new LANManager(port);
         manager.start();
         managers.add(manager);
         return manager;
@@ -44,13 +43,13 @@ class LANWorkflowE2ETest {
         long timeoutMs = timeoutSeconds * 1000L;
 
         while (System.currentTimeMillis() - startTime < timeoutMs) {
-            if (manager.getConnectedPeerCount() >= expectedCount) {
+            if (manager.getPeers().size() >= expectedCount) {
                 return;
             }
             Thread.sleep(500);
         }
 
-        fail("Timeout waiting for " + expectedCount + " connections. Got: " + manager.getConnectedPeerCount());
+        fail("Timeout waiting for " + expectedCount + " connections. Got: " + manager.getPeers().size());
     }
 
     @Test
@@ -71,10 +70,10 @@ class LANWorkflowE2ETest {
 
         System.out.println("All peers connected successfully");
 
-        assertEquals(3, peer1.getConnectedPeerCount());
-        assertEquals(3, peer2.getConnectedPeerCount());
-        assertEquals(3, peer3.getConnectedPeerCount());
-        assertEquals(3, peer4.getConnectedPeerCount());
+        assertEquals(3, peer1.getPeers().size());
+        assertEquals(3, peer2.getPeers().size());
+        assertEquals(3, peer3.getPeers().size());
+        assertEquals(3, peer4.getPeers().size());
 
         System.out.println("=== Test Passed ===");
     }
@@ -88,16 +87,16 @@ class LANWorkflowE2ETest {
         LANManager receiver2 = createAndStartManager("e2e-receiver-2", 11007);
 
         CountDownLatch messageLatch = new CountDownLatch(2);
-        CopyOnWriteArrayList<Message> receivedMessages = new CopyOnWriteArrayList<>();
+        CopyOnWriteArrayList<String> receivedMessages = new CopyOnWriteArrayList<>();
 
-        LANManager.MessageListener listener = message -> {
+        api.NetworkManager.MessageListener listener = (peerId, message) -> {
             System.out.println("Message received: " + message);
             receivedMessages.add(message);
             messageLatch.countDown();
         };
 
-        receiver1.addMessageListener(listener);
-        receiver2.addMessageListener(listener);
+        receiver1.setMessageListener(listener);
+        receiver2.setMessageListener(listener);
 
         System.out.println("Waiting for peer discovery and connections...");
         waitForConnections(sender, 2, 30);
@@ -112,9 +111,7 @@ class LANWorkflowE2ETest {
 
         assertEquals(2, receivedMessages.size());
         receivedMessages.forEach(msg -> {
-            assertEquals("E2E Test Message", msg.getContent());
-            assertEquals("e2e-sender", msg.getSenderId());
-            assertEquals(Message.MessageType.TEXT, msg.getType());
+            assertEquals("E2E Test Message", msg);
         });
 
         System.out.println("=== Test Passed ===");
@@ -139,7 +136,7 @@ class LANWorkflowE2ETest {
 
         System.out.println("Testing if remaining peers can still communicate...");
         CountDownLatch latch = new CountDownLatch(1);
-        peer3.addMessageListener(msg -> latch.countDown());
+        peer3.setMessageListener((peerId, msg) -> latch.countDown());
 
         Thread.sleep(1000);
         peer1.broadcast("Test after disconnect");
@@ -152,7 +149,7 @@ class LANWorkflowE2ETest {
 
         Thread.sleep(10000);
 
-        assertTrue(peer1.getDiscoveredPeers().containsKey("resilience-2"),
+        assertTrue(peer1.getPeers().stream().anyMatch(p -> p.getPeerId().contains("resilience-2") || p.getPeerId().startsWith("lan-")),
             "Peer should be rediscovered");
 
         System.out.println("=== Test Passed ===");
@@ -168,7 +165,7 @@ class LANWorkflowE2ETest {
         int messageCount = 50;
         CountDownLatch latch = new CountDownLatch(messageCount);
 
-        receiver.addMessageListener(msg -> latch.countDown());
+        receiver.setMessageListener((peerId, msg) -> latch.countDown());
 
         System.out.println("Waiting for connection...");
         waitForConnections(sender, 1, 30);

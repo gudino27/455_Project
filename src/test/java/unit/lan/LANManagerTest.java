@@ -1,7 +1,6 @@
 package unit.lan;
 
 import network.lan.LANManager;
-import network.protocol.Message;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -27,20 +26,20 @@ class LANManagerTest {
 
     @Test
     void testManagerCreation() throws IOException {
-        manager1 = new LANManager("peer-1", 9100);
+        manager1 = new LANManager(9100);
         assertNotNull(manager1);
     }
 
     @Test
-    void testManagerStart() throws IOException {
-        manager1 = new LANManager("peer-1", 9100);
+    void testManagerStart() throws Exception {
+        manager1 = new LANManager(9100);
         manager1.start();
     }
 
     @Test
-    void testPeerConnection() throws IOException, InterruptedException {
-        manager1 = new LANManager("peer-1", 9101);
-        manager2 = new LANManager("peer-2", 9102);
+    void testPeerConnection() throws Exception {
+        manager1 = new LANManager(9101);
+        manager2 = new LANManager(9102);
 
         CountDownLatch latch = new CountDownLatch(1);
 
@@ -50,7 +49,7 @@ class LANManagerTest {
         Thread connectionChecker = new Thread(() -> {
             try {
                 for (int i = 0; i < 30; i++) {
-                    if (manager1.getConnectedPeerCount() > 0 && manager2.getConnectedPeerCount() > 0) {
+                    if (manager1.getPeers().size() > 0 && manager2.getPeers().size() > 0) {
                         latch.countDown();
                         break;
                     }
@@ -65,20 +64,20 @@ class LANManagerTest {
         boolean connected = latch.await(20, TimeUnit.SECONDS);
         assertTrue(connected, "Peers failed to connect");
 
-        assertTrue(manager1.getConnectedPeerCount() > 0);
-        assertTrue(manager2.getConnectedPeerCount() > 0);
+        assertTrue(manager1.getPeers().size() > 0);
+        assertTrue(manager2.getPeers().size() > 0);
     }
 
     @Test
-    void testBroadcastMessage() throws IOException, InterruptedException {
-        manager1 = new LANManager("peer-1", 9103);
-        manager2 = new LANManager("peer-2", 9104);
+    void testBroadcastMessage() throws Exception {
+        manager1 = new LANManager(9103);
+        manager2 = new LANManager(9104);
 
         CountDownLatch connectionLatch = new CountDownLatch(1);
         CountDownLatch messageLatch = new CountDownLatch(1);
-        AtomicReference<Message> receivedMessage = new AtomicReference<>();
+        AtomicReference<String> receivedMessage = new AtomicReference<>();
 
-        manager2.addMessageListener(message -> {
+        manager2.setMessageListener((peerId, message) -> {
             receivedMessage.set(message);
             messageLatch.countDown();
         });
@@ -89,7 +88,7 @@ class LANManagerTest {
         Thread connectionChecker = new Thread(() -> {
             try {
                 for (int i = 0; i < 30; i++) {
-                    if (manager1.getConnectedPeerCount() > 0) {
+                    if (manager1.getPeers().size() > 0) {
                         connectionLatch.countDown();
                         break;
                     }
@@ -111,16 +110,14 @@ class LANManagerTest {
         assertTrue(messageReceived, "Message not received");
 
         assertNotNull(receivedMessage.get());
-        assertEquals("Hello from peer-1", receivedMessage.get().getContent());
-        assertEquals("peer-1", receivedMessage.get().getSenderId());
-        assertEquals(Message.MessageType.TEXT, receivedMessage.get().getType());
+        assertEquals("Hello from peer-1", receivedMessage.get());
     }
 
     @Test
-    void testMultiplePeerConnection() throws IOException, InterruptedException {
-        manager1 = new LANManager("peer-1", 9105);
-        manager2 = new LANManager("peer-2", 9106);
-        manager3 = new LANManager("peer-3", 9107);
+    void testMultiplePeerConnection() throws Exception {
+        manager1 = new LANManager(9105);
+        manager2 = new LANManager(9106);
+        manager3 = new LANManager(9107);
 
         CountDownLatch latch = new CountDownLatch(1);
 
@@ -131,9 +128,9 @@ class LANManagerTest {
         Thread connectionChecker = new Thread(() -> {
             try {
                 for (int i = 0; i < 40; i++) {
-                    int count1 = manager1.getConnectedPeerCount();
-                    int count2 = manager2.getConnectedPeerCount();
-                    int count3 = manager3.getConnectedPeerCount();
+                    int count1 = manager1.getPeers().size();
+                    int count2 = manager2.getPeers().size();
+                    int count3 = manager3.getPeers().size();
 
                     if (count1 >= 2 && count2 >= 2 && count3 >= 2) {
                         latch.countDown();
@@ -150,30 +147,29 @@ class LANManagerTest {
         boolean allConnected = latch.await(25, TimeUnit.SECONDS);
         assertTrue(allConnected, "Not all peers connected");
 
-        assertTrue(manager1.getConnectedPeerCount() >= 2);
-        assertTrue(manager2.getConnectedPeerCount() >= 2);
-        assertTrue(manager3.getConnectedPeerCount() >= 2);
+        assertTrue(manager1.getPeers().size() >= 2);
+        assertTrue(manager2.getPeers().size() >= 2);
+        assertTrue(manager3.getPeers().size() >= 2);
     }
 
     @Test
-    void testDiscoveredPeers() throws IOException, InterruptedException {
-        manager1 = new LANManager("peer-1", 9108);
-        manager2 = new LANManager("peer-2", 9109);
+    void testDiscoveredPeers() throws Exception {
+        manager1 = new LANManager(9108);
+        manager2 = new LANManager(9109);
 
         manager1.start();
         manager2.start();
 
         Thread.sleep(8000);
 
-        assertFalse(manager1.getDiscoveredPeers().isEmpty());
-        assertTrue(manager1.getDiscoveredPeers().containsKey("peer-2"));
+        assertFalse(manager1.getPeers().isEmpty());
     }
 
     @Test
-    void testManagerClose() throws IOException {
-        manager1 = new LANManager("peer-1", 9110);
+    void testManagerClose() throws Exception {
+        manager1 = new LANManager(9110);
         manager1.start();
         manager1.close();
-        assertEquals(0, manager1.getConnectedPeerCount());
+        assertEquals(0, manager1.getPeers().size());
     }
 }

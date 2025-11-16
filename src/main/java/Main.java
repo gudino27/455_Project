@@ -1,10 +1,14 @@
-import network.lan.LANManager;
+import api.ConnectionMode;
+import api.NetworkManager;
+import api.NetworkManagerFactory;
+import util.NetworkConfig;
 
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.InputStream;
-import java.util.UUID;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.logging.LogManager;
 
 public class Main {
@@ -17,39 +21,91 @@ public class Main {
         } catch (IOException e) {
             System.err.println("Could not load logging configuration");
         }
-        int port = 9000;
-        String peerId = "peer-" + UUID.randomUUID().toString().substring(0, 8);
 
-        if (args.length > 0) {
-            try {
-                port = Integer.parseInt(args[0]);
-            } catch (NumberFormatException e) {
-                System.err.println("Invalid port number, using default: " + port);
+        ConnectionMode mode = ConnectionMode.LAN;
+        int port = 9000;
+        List<String> bootstrapPeers = new ArrayList<>();
+        String relayServer = null;
+        int relayPort = 9090;
+        boolean enableUPnP = true;
+
+        for (int i = 0; i < args.length; i++) {
+            if (args[i].equals("--mode") && i + 1 < args.length) {
+                mode = args[++i].equalsIgnoreCase("p2p") ? ConnectionMode.P2P : ConnectionMode.LAN;
+            } else if (args[i].equals("--port") && i + 1 < args.length) {
+                try {
+                    port = Integer.parseInt(args[++i]);
+                } catch (NumberFormatException e) {
+                    System.err.println("Invalid port number, using default: " + port);
+                }
+            } else if (args[i].equals("--bootstrap-peers") && i + 1 < args.length) {
+                String[] peers = args[++i].split(",");
+                for (String peer : peers) {
+                    bootstrapPeers.add(peer.trim());
+                }
+            } else if (args[i].equals("--relay-server") && i + 1 < args.length) {
+                String[] parts = args[++i].split(":");
+                if (parts.length == 2) {
+                    relayServer = parts[0];
+                    try {
+                        relayPort = Integer.parseInt(parts[1]);
+                    } catch (NumberFormatException e) {
+                        System.err.println("Invalid relay port, using default: " + relayPort);
+                    }
+                } else {
+                    relayServer = args[i];
+                }
+            } else if (args[i].equals("--no-upnp")) {
+                enableUPnP = false;
             }
         }
 
-        if (args.length > 1) {
-            peerId = args[1];
-        }
-
         try {
-            LANManager manager = new LANManager(peerId, port);
+            NetworkConfig config = new NetworkConfig();
+            config.setLocalPort(port);
+            config.setBootstrapPeers(bootstrapPeers);
+            if (relayServer != null) {
+                config.setRelayServerAddress(relayServer);
+                config.setRelayServerPort(relayPort);
+            }
+            config.setEnableUPnP(enableUPnP);
 
-            manager.addMessageListener(message -> {
-                System.out.println("[" + message.getSenderId() + "]: " + message.getContent());
+            NetworkManager manager = NetworkManagerFactory.createNetworkManager(mode, config);
+
+            manager.setMessageListener((peerId, message) -> {
+                System.out.println("[" + peerId + "]: " + message);
+            });
+
+            manager.setPeerConnectionListener(new NetworkManager.PeerConnectionListener() {
+                @Override
+                public void onPeerConnected(String peerId, String address) {
+                    System.out.println("[SYSTEM] Peer connected: " + peerId + " from " + address);
+                }
+
+                @Override
+                public void onPeerDisconnected(String peerId) {
+                    System.out.println("[SYSTEM] Peer disconnected: " + peerId);
+                }
             });
 
             manager.start();
 
             System.out.println("=================================");
-            System.out.println("LAN Network Application Started");
-            System.out.println("Peer ID: " + peerId);
+            System.out.println("Network Application Started");
+            System.out.println("Mode: " + mode);
             System.out.println("Port: " + port);
+            if (mode == ConnectionMode.P2P && !bootstrapPeers.isEmpty()) {
+                System.out.println("Bootstrap Peers: " + bootstrapPeers);
+            }
+            if (relayServer != null) {
+                System.out.println("Relay Server: " + relayServer + ":" + relayPort);
+            }
             System.out.println("=================================");
             System.out.println("Commands:");
             System.out.println("  send <peer-id> <message>  - Send message to specific peer");
             System.out.println("  broadcast <message>       - Send message to all peers");
-            System.out.println("  peers                     - List connected peers");
+            System.out.println("  peers                     - List discovered peers");
+            System.out.println("  connect <address> <port>  - Connect to a peer manually");
             System.out.println("  quit                      - Exit application");
             System.out.println("=================================");
 
@@ -60,22 +116,36 @@ public class Main {
                 if (input.equals("quit")) {
                     break;
                 } else if (input.equals("peers")) {
-                    System.out.println("Connected peers: " + manager.getConnectedPeerCount());
-                    manager.getDiscoveredPeers().forEach((id, info) ->
-                        System.out.println("  - " + id + " (" + info.getAddress() + ":" + info.getPort() + ")")
-                    );
+                    List<network.lan.PeerInfo> peers = manager.getPeers();
+                    System.out.println("Discovered peers: " + peers.size());
+                    for (network.lan.PeerInfo peer : peers) {
+                        System.out.println("  - " + peer.getPeerId() + " (" + peer.getAddress() + ":" + peer.getPort() + ")");
+                    }
+                } else if (input.startsWith("connect ")) {
+                    String rest = input.substring(8);
+                    String[] parts = rest.split(" ");
+                    if (parts.length == 2) {
+                        try {
+                            String address = parts[0];
+                            int connectPort = Integer.parseInt(parts[1]);
+                            manager.connect(address, connectPort);
+                            System.out.println("Attempting to connect to " + address + ":" + connectPort);
+                        } catch (NumberFormatException e) {
+                            System.out.println("Invalid port number");
+                        } catch (Exception e) {
+                            System.out.println("Failed to connect: " + e.getMessage());
+                        }
+                    } else {
+                        System.out.println("Usage: connect <address> <port>");
+                    }
                 } else if (input.startsWith("send ")) {
                     String rest = input.substring(5);
                     int spaceIndex = rest.indexOf(' ');
                     if (spaceIndex > 0) {
                         String targetPeer = rest.substring(0, spaceIndex);
                         String message = rest.substring(spaceIndex + 1);
-                        try {
-                            manager.sendTo(targetPeer, message);
-                            System.out.println("Message sent to " + targetPeer + ": " + message);
-                        } catch (IOException e) {
-                            System.out.println("Failed to send message: " + e.getMessage());
-                        }
+                        manager.sendMessage(targetPeer, message);
+                        System.out.println("Message sent to " + targetPeer + ": " + message);
                     } else {
                         System.out.println("Usage: send <peer-id> <message>");
                     }
@@ -91,7 +161,7 @@ public class Main {
             manager.close();
             System.out.println("Application stopped.");
 
-        } catch (IOException e) {
+        } catch (Exception e) {
             System.err.println("Error starting application: " + e.getMessage());
             e.printStackTrace();
         }

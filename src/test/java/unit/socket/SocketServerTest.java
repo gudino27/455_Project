@@ -55,11 +55,16 @@ class SocketServerTest {
         server.start();
 
         Socket client = new Socket("localhost", port);
+        java.io.ObjectOutputStream oos = new java.io.ObjectOutputStream(client.getOutputStream());
+        oos.flush();
+        java.io.ObjectInputStream ois = new java.io.ObjectInputStream(client.getInputStream());
 
         assertTrue(latch.await(5, TimeUnit.SECONDS));
         assertNotNull(acceptedConnection.get());
         assertTrue(acceptedConnection.get().isConnected());
 
+        ois.close();
+        oos.close();
         client.close();
         acceptedConnection.get().close();
     }
@@ -76,14 +81,22 @@ class SocketServerTest {
         server.start();
 
         Socket[] clients = new Socket[connectionCount];
+        java.io.ObjectOutputStream[] outputStreams = new java.io.ObjectOutputStream[connectionCount];
+        java.io.ObjectInputStream[] inputStreams = new java.io.ObjectInputStream[connectionCount];
+
         for (int i = 0; i < connectionCount; i++) {
             clients[i] = new Socket("localhost", port);
+            outputStreams[i] = new java.io.ObjectOutputStream(clients[i].getOutputStream());
+            outputStreams[i].flush();
+            inputStreams[i] = new java.io.ObjectInputStream(clients[i].getInputStream());
         }
 
         assertTrue(latch.await(10, TimeUnit.SECONDS));
 
-        for (Socket client : clients) {
-            client.close();
+        for (int i = 0; i < connectionCount; i++) {
+            inputStreams[i].close();
+            outputStreams[i].close();
+            clients[i].close();
         }
     }
 
@@ -115,9 +128,14 @@ class SocketServerTest {
         server.start();
 
         Socket client = new Socket("localhost", port);
+        java.io.ObjectOutputStream oos = new java.io.ObjectOutputStream(client.getOutputStream());
+        oos.flush();
+        java.io.ObjectInputStream ois = new java.io.ObjectInputStream(client.getInputStream());
 
         Thread.sleep(1000);
 
+        ois.close();
+        oos.close();
         client.close();
     }
 }

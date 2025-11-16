@@ -1,7 +1,6 @@
 package integration;
 
 import network.lan.LANManager;
-import network.protocol.Message;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
@@ -27,7 +26,7 @@ class LANIntegrationTest {
     }
 
     private LANManager createManager(String peerId, int port) throws IOException {
-        LANManager manager = new LANManager(peerId, port);
+        LANManager manager = new LANManager(port);
         managers.add(manager);
         return manager;
     }
@@ -38,7 +37,7 @@ class LANIntegrationTest {
         Thread checker = new Thread(() -> {
             try {
                 for (int i = 0; i < timeoutSeconds * 2; i++) {
-                    if (manager.getConnectedPeerCount() >= expectedCount) {
+                    if (manager.getPeers().size() >= expectedCount) {
                         latch.countDown();
                         break;
                     }
@@ -51,7 +50,7 @@ class LANIntegrationTest {
         checker.start();
 
         assertTrue(latch.await(timeoutSeconds, TimeUnit.SECONDS),
-            "Expected " + expectedCount + " connections but got " + manager.getConnectedPeerCount());
+            "Expected " + expectedCount + " connections but got " + manager.getPeers().size());
     }
 
     @Test
@@ -60,11 +59,11 @@ class LANIntegrationTest {
         LANManager peer2 = createManager("peer-2", 10002);
         LANManager peer3 = createManager("peer-3", 10003);
 
-        CopyOnWriteArrayList<Message> peer2Messages = new CopyOnWriteArrayList<>();
-        CopyOnWriteArrayList<Message> peer3Messages = new CopyOnWriteArrayList<>();
+        CopyOnWriteArrayList<String> peer2Messages = new CopyOnWriteArrayList<>();
+        CopyOnWriteArrayList<String> peer3Messages = new CopyOnWriteArrayList<>();
 
-        peer2.addMessageListener(peer2Messages::add);
-        peer3.addMessageListener(peer3Messages::add);
+        peer2.setMessageListener((peerId, message) -> peer2Messages.add(message));
+        peer3.setMessageListener((peerId, message) -> peer3Messages.add(message));
 
         peer1.start();
         peer2.start();
@@ -83,8 +82,7 @@ class LANIntegrationTest {
         assertTrue(peer2Messages.size() > 0, "Peer 2 should receive message");
         assertTrue(peer3Messages.size() > 0, "Peer 3 should receive message");
 
-        assertEquals("Hello from peer-1", peer2Messages.get(0).getContent());
-        assertEquals("peer-1", peer2Messages.get(0).getSenderId());
+        assertEquals("Hello from peer-1", peer2Messages.get(0));
     }
 
     @Test
@@ -97,15 +95,15 @@ class LANIntegrationTest {
 
         waitForConnections(peer1, 1, 25);
 
-        assertEquals(1, peer1.getConnectedPeerCount());
-        assertEquals(1, peer2.getConnectedPeerCount());
+        assertEquals(1, peer1.getPeers().size());
+        assertEquals(1, peer2.getPeers().size());
 
         peer2.close();
         managers.remove(peer2);
 
         Thread.sleep(3000);
 
-        assertTrue(peer1.getConnectedPeerCount() < 1 || !peer1.getDiscoveredPeers().containsKey("peer-2"));
+        assertTrue(peer1.getPeers().size() < 1 || peer1.getPeers().stream().noneMatch(p -> p.getPeerId().equals("peer-2")));
     }
 
     @Test
@@ -116,16 +114,16 @@ class LANIntegrationTest {
         LANManager peer4 = createManager("peer-4", 10009);
 
         CountDownLatch messageLatch = new CountDownLatch(3);
-        CopyOnWriteArrayList<Message> receivedMessages = new CopyOnWriteArrayList<>();
+        CopyOnWriteArrayList<String> receivedMessages = new CopyOnWriteArrayList<>();
 
-        LANManager.MessageListener listener = message -> {
+        api.NetworkManager.MessageListener listener = (peerId, message) -> {
             receivedMessages.add(message);
             messageLatch.countDown();
         };
 
-        peer2.addMessageListener(listener);
-        peer3.addMessageListener(listener);
-        peer4.addMessageListener(listener);
+        peer2.setMessageListener(listener);
+        peer3.setMessageListener(listener);
+        peer4.setMessageListener(listener);
 
         peer1.start();
         peer2.start();
@@ -149,15 +147,15 @@ class LANIntegrationTest {
         LANManager peer2 = createManager("peer-2", 10011);
 
         CountDownLatch latch = new CountDownLatch(2);
-        CopyOnWriteArrayList<Message> peer1Messages = new CopyOnWriteArrayList<>();
-        CopyOnWriteArrayList<Message> peer2Messages = new CopyOnWriteArrayList<>();
+        CopyOnWriteArrayList<String> peer1Messages = new CopyOnWriteArrayList<>();
+        CopyOnWriteArrayList<String> peer2Messages = new CopyOnWriteArrayList<>();
 
-        peer1.addMessageListener(message -> {
+        peer1.setMessageListener((peerId, message) -> {
             peer1Messages.add(message);
             latch.countDown();
         });
 
-        peer2.addMessageListener(message -> {
+        peer2.setMessageListener((peerId, message) -> {
             peer2Messages.add(message);
             latch.countDown();
         });
@@ -176,8 +174,8 @@ class LANIntegrationTest {
         boolean bothReceived = latch.await(10, TimeUnit.SECONDS);
         assertTrue(bothReceived, "Bidirectional communication failed");
 
-        assertTrue(peer1Messages.stream().anyMatch(m -> m.getContent().equals("Message from peer-2")));
-        assertTrue(peer2Messages.stream().anyMatch(m -> m.getContent().equals("Message from peer-1")));
+        assertTrue(peer1Messages.stream().anyMatch(m -> m.equals("Message from peer-2")));
+        assertTrue(peer2Messages.stream().anyMatch(m -> m.equals("Message from peer-1")));
     }
 
     @Test
@@ -200,7 +198,7 @@ class LANIntegrationTest {
 
         Thread.sleep(8000);
 
-        assertTrue(peer1.getDiscoveredPeers().containsKey("peer-2"));
+        assertTrue(peer1.getPeers().stream().anyMatch(p -> p.getPeerId().equals("peer-2")));
     }
 
     @Test
@@ -211,7 +209,7 @@ class LANIntegrationTest {
         int messageCount = 10;
         CountDownLatch latch = new CountDownLatch(messageCount);
 
-        peer2.addMessageListener(message -> latch.countDown());
+        peer2.setMessageListener((peerId, message) -> latch.countDown());
 
         peer1.start();
         peer2.start();

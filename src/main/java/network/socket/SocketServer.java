@@ -20,13 +20,13 @@ public class SocketServer implements AutoCloseable {
     private volatile ConnectionHandler connectionHandler;
 
     public SocketServer(int port) throws IOException {
-        this.port = port;
         this.serverSocket = new ServerSocket(port);
+        this.port = serverSocket.getLocalPort();
         this.executorService = Executors.newCachedThreadPool();
         this.running = new AtomicBoolean(false);
         this.acceptThread = new Thread(this::acceptConnections);
         this.acceptThread.setDaemon(true);
-        logger.info("Socket server created on port " + port);
+        logger.info("Socket server created on port " + this.port);
     }
 
     public void setConnectionHandler(ConnectionHandler handler) {
