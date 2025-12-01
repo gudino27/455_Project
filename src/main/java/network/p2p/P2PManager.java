@@ -126,14 +126,20 @@ public class P2PManager implements NetworkManager {
 
     @Override
     public void connect(String address, int port) throws Exception {
-        String peerId = address + ":" + port;
-        PeerInfo peerInfo = new PeerInfo(peerId, address, port);
-
-        if (connectionManager.getConnectionState(peerId) == PeerConnectionManager.ConnectionState.CONNECTED) {
-            logger.fine("Already connected to " + peerId);
-            return;
+        // Check if we already know this peer by address:port
+        for (PeerInfo peer : discovery.getKnownPeers()) {
+            if (peer.getAddress().equals(address) && peer.getPort() == port) {
+                if (connectionManager.getConnectionState(peer.getPeerId()) == PeerConnectionManager.ConnectionState.CONNECTED) {
+                    logger.fine("Already connected to " + peer.getPeerId());
+                    return;
+                }
+                connectToPeer(peer);
+                return;
+            }
         }
 
+        // First time connecting, use placeholder until handshake
+        PeerInfo peerInfo = new PeerInfo("connecting-" + address + ":" + port, address, port);
         connectToPeer(peerInfo);
     }
 
@@ -266,32 +272,78 @@ public class P2PManager implements NetworkManager {
 
     private void handleIncomingConnection(SocketConnection connection) throws Exception {
 
-        connection.setMessageHandler(new SocketConnection.MessageHandler() {
-            @Override
-            public void onMessage(Object msg, SocketConnection conn) {
-                if (msg instanceof Message) {
-                    handleMessage((Message) msg, conn);
-                }
-            }
+        // Add timeout before receiving - must be done before setting message handler
+        connection.setTimeout(config.getConnectionTimeoutMs());
 
-            @Override
-            public void onError(Exception e, SocketConnection conn) {
-                logger.warning("Connection error: " + e.getMessage());
-            }
+        Object firstMessage;
+        try {
+            firstMessage = connection.receiveBlocking(config.getConnectionTimeoutMs());
+        } catch (InterruptedException e) {
+            logger.warning("Interrupted while waiting for handshake");
+            connection.close();
+            return;
+        }
 
-            @Override
-            public void onDisconnect(SocketConnection conn) {
-                logger.fine("Peer disconnected: " + conn.getRemoteAddress());
-            }
-        });
+        if (firstMessage == null) {
+            logger.warning("Timeout waiting for handshake from " + connection.getRemoteAddress());
+            connection.close();
+            return;
+        }
 
-        Object firstMessage = connection.receiveBlocking();
         if (firstMessage instanceof Message) {
             Message handshake = (Message) firstMessage;
 
             if (handshake.getType() == Message.MessageType.HANDSHAKE) {
                 String remotePeerId = handshake.getSenderId();
-                PeerInfo peerInfo = new PeerInfo(remotePeerId, connection.getRemoteAddress(), connection.getRemotePort());
+
+                int remotePort = connection.getRemotePort();
+                String content = handshake.getContent();
+                if (content != null && content.startsWith("HANDSHAKE:")) {
+                    try {
+                        remotePort = Integer.parseInt(content.substring(10));
+                    } catch (NumberFormatException e) {
+                        logger.warning("Invalid port in handshake: " + content);
+                    }
+                }
+
+                PeerInfo peerInfo = new PeerInfo(remotePeerId, connection.getRemoteAddress(), remotePort);
+
+                // CHECK FOR DUPLICATE BEFORE ADDING
+                PeerConnectionManager.ConnectionState existingState = connectionManager.getConnectionState(remotePeerId);
+                if (existingState == PeerConnectionManager.ConnectionState.CONNECTED) {
+                    // Use peer ID comparison to decide which connection to keep
+                    if (shouldCloseIncomingConnection(localPeerId, remotePeerId)) {
+                        logger.info("Duplicate connection with " + remotePeerId + ", closing incoming (keeping outgoing)");
+                        connection.close();
+                        return;
+                    } else {
+                        logger.info("Duplicate connection with " + remotePeerId + ", keeping incoming (closing outgoing)");
+                        connectionManager.disconnect(remotePeerId);
+                    }
+                }
+
+                // Clear socket timeout after handshake (0 = infinite)
+                connection.setTimeout(0);
+
+                // Set message handler AFTER handshake is complete
+                connection.setMessageHandler(new SocketConnection.MessageHandler() {
+                    @Override
+                    public void onMessage(Object msg, SocketConnection conn) {
+                        if (msg instanceof Message) {
+                            handleMessage((Message) msg, conn);
+                        }
+                    }
+
+                    @Override
+                    public void onError(Exception e, SocketConnection conn) {
+                        logger.warning("Connection error: " + e.getMessage());
+                    }
+
+                    @Override
+                    public void onDisconnect(SocketConnection conn) {
+                        logger.fine("Peer disconnected: " + conn.getRemoteAddress());
+                    }
+                });
 
                 connectionManager.connect(peerInfo, connection, PeerConnectionManager.ConnectionType.DIRECT);
                 discovery.addPeer(remotePeerId, peerInfo.getAddress(), peerInfo.getPort());
@@ -325,35 +377,81 @@ public class P2PManager implements NetworkManager {
 
             SocketConnection connection = new SocketConnection(socket);
 
-            connection.setMessageHandler(new SocketConnection.MessageHandler() {
-                @Override
-                public void onMessage(Object msg, SocketConnection conn) {
-                    if (msg instanceof Message) {
-                        handleMessage((Message) msg, conn);
-                    }
-                }
-
-                @Override
-                public void onError(Exception e, SocketConnection conn) {
-                    logger.warning("Connection error with " + peerInfo.getPeerId() + ": " + e.getMessage());
-                }
-
-                @Override
-                public void onDisconnect(SocketConnection conn) {
-                    logger.info("Disconnected from " + peerInfo.getPeerId());
-                    connectionManager.disconnect(peerInfo.getPeerId());
-                }
-            });
-
-            Message handshake = new Message(localPeerId, "HANDSHAKE", Message.MessageType.HANDSHAKE);
+            Message handshake = new Message(localPeerId, "HANDSHAKE:" + config.getLocalPort(), Message.MessageType.HANDSHAKE);
             connection.send(handshake);
 
-            connectionManager.connect(peerInfo, connection, PeerConnectionManager.ConnectionType.DIRECT);
+            // Wait for handshake ACK to get real peer ID (with timeout)
+            Object response;
+            try {
+                response = connection.receiveBlocking(config.getConnectionTimeoutMs());
+            } catch (InterruptedException e) {
+                logger.warning("Interrupted waiting for handshake ACK from " + peerInfo.getPeerId());
+                connection.close();
+                return;
+            }
 
-            logger.info("Connected to peer: " + peerInfo.getPeerId());
-            notifyPeerConnected(peerInfo.getPeerId(), peerInfo.getAddress());
+            if (response == null) {
+                logger.warning("Timeout waiting for handshake ACK from " + peerInfo.getPeerId());
+                connection.close();
+                return;
+            }
 
-            sendPeerExchange(peerInfo.getPeerId());
+            if (response instanceof Message) {
+                Message ackMsg = (Message) response;
+                if (ackMsg.getType() == Message.MessageType.ACK && "HANDSHAKE_ACK".equals(ackMsg.getContent())) {
+                    String realPeerId = ackMsg.getSenderId();
+
+                    // Check for duplicate with real peer ID
+                    PeerConnectionManager.ConnectionState existingState = connectionManager.getConnectionState(realPeerId);
+                    if (existingState == PeerConnectionManager.ConnectionState.CONNECTED) {
+                        if (!shouldInitiateConnection(localPeerId, realPeerId)) {
+                            logger.info("Duplicate connection with " + realPeerId + ", closing outgoing");
+                            connection.close();
+                            return;
+                        }
+                    }
+
+                    // Update peer info with real ID
+                    PeerInfo updatedPeerInfo = new PeerInfo(realPeerId, peerInfo.getAddress(), peerInfo.getPort());
+
+                    // Clear socket timeout after handshake (0 = infinite)
+                    connection.setTimeout(0);
+
+                    // Set message handler after handshake with real peer ID
+                    connection.setMessageHandler(new SocketConnection.MessageHandler() {
+                        @Override
+                        public void onMessage(Object msg, SocketConnection conn) {
+                            if (msg instanceof Message) {
+                                handleMessage((Message) msg, conn);
+                            }
+                        }
+
+                        @Override
+                        public void onError(Exception e, SocketConnection conn) {
+                            logger.warning("Connection error with " + realPeerId + ": " + e.getMessage());
+                        }
+
+                        @Override
+                        public void onDisconnect(SocketConnection conn) {
+                            logger.info("Disconnected from " + realPeerId);
+                            connectionManager.disconnect(realPeerId);
+                        }
+                    });
+
+                    connectionManager.connect(updatedPeerInfo, connection, PeerConnectionManager.ConnectionType.DIRECT);
+                    discovery.addPeer(realPeerId, updatedPeerInfo.getAddress(), updatedPeerInfo.getPort());
+
+                    logger.info("Connected to peer: " + realPeerId);
+                    notifyPeerConnected(realPeerId, updatedPeerInfo.getAddress());
+                    sendPeerExchange(realPeerId);
+                } else {
+                    logger.warning("Unexpected handshake response: " + ackMsg);
+                    connection.close();
+                }
+            } else {
+                logger.warning("Invalid handshake response");
+                connection.close();
+            }
 
         } catch (IOException e) {
             logger.warning("Direct connection to " + peerInfo.getPeerId() + " failed: " + e.getMessage());
@@ -367,9 +465,16 @@ public class P2PManager implements NetworkManager {
     }
 
     private void handlePeerDiscovery(PeerInfo peerInfo) {
-        if (connectionManager.getConnectionState(peerInfo.getPeerId()) == PeerConnectionManager.ConnectionState.DISCONNECTED) {
-            logger.info("Discovered new peer, attempting connection: " + peerInfo.getPeerId());
-            connectToPeer(peerInfo);
+        PeerConnectionManager.ConnectionState state = connectionManager.getConnectionState(peerInfo.getPeerId());
+
+        if (state == PeerConnectionManager.ConnectionState.DISCONNECTED) {
+            // Only initiate if our peer ID is smaller (prevents simultaneous connections)
+            if (shouldInitiateConnection(localPeerId, peerInfo.getPeerId())) {
+                logger.info("Discovered new peer, attempting connection: " + peerInfo.getPeerId());
+                connectToPeer(peerInfo);
+            } else {
+                logger.info("Discovered new peer, waiting for incoming connection: " + peerInfo.getPeerId());
+            }
         }
     }
 
@@ -504,6 +609,15 @@ public class P2PManager implements NetworkManager {
 
     private String generatePeerId() {
         return "peer-" + UUID.randomUUID().toString().substring(0, 8);
+    }
+
+    private boolean shouldCloseIncomingConnection(String localId, String remoteId) {
+        // Peer with smaller ID keeps outgoing, larger ID keeps incoming
+        return localId.compareTo(remoteId) < 0;
+    }
+
+    private boolean shouldInitiateConnection(String localId, String remoteId) {
+        return localId.compareTo(remoteId) < 0;
     }
 
     @Override

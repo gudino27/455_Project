@@ -32,7 +32,7 @@ public class P2PDiscovery implements AutoCloseable {
                 try {
                     String address = parts[0];
                     int port = Integer.parseInt(parts[1]);
-                    addPeer(generatePeerId(address, port), address, port);
+                    addPeer("bootstrap-" + address + ":" + port, address, port);
                 } catch (NumberFormatException e) {
                     logger.warning("Invalid bootstrap peer format: " + bootstrapPeer);
                 }
@@ -119,10 +119,6 @@ public class P2PDiscovery implements AutoCloseable {
                 logger.warning("Error in discovery listener: " + e.getMessage());
             }
         }
-    }
-
-    private String generatePeerId(String address, int port) {
-        return address + ":" + port;
     }
 
     @Override

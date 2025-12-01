@@ -5,6 +5,7 @@ import java.net.Socket;
 import java.net.SocketException;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public class SocketConnection implements AutoCloseable {
@@ -66,6 +67,10 @@ public class SocketConnection implements AutoCloseable {
         return messageQueue.take();
     }
 
+    public Object receiveBlocking(long timeoutMs) throws InterruptedException {
+        return messageQueue.poll(timeoutMs, TimeUnit.MILLISECONDS);
+    }
+
     public String getRemoteAddress() {
         return socket.getInetAddress().getHostAddress();
     }
@@ -76,6 +81,10 @@ public class SocketConnection implements AutoCloseable {
 
     public boolean isConnected() {
         return socket.isConnected() && !socket.isClosed() && running.get();
+    }
+
+    public void setTimeout(int timeoutMs) throws IOException {
+        socket.setSoTimeout(timeoutMs);
     }
 
     private void handleError(Exception e) {
