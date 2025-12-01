@@ -2,6 +2,8 @@ import api.ConnectionMode;
 import api.NetworkManager;
 import api.NetworkManagerFactory;
 import util.NetworkConfig;
+import util.NATDetector;
+import util.UPnPManager;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -22,7 +24,7 @@ public class Main {
             System.err.println("Could not load logging configuration");
         }
 
-        ConnectionMode mode = ConnectionMode.LAN;
+        ConnectionMode mode = selectBestMode();
         int port = 9000;
         List<String> bootstrapPeers = new ArrayList<>();
         String relayServer = null;
@@ -165,5 +167,34 @@ public class Main {
             System.err.println("Error starting application: " + e.getMessage());
             e.printStackTrace();
         }
+    }
+    private static ConnectionMode selectBestMode(){
+        System.out.println("[Network Detection] Evaluating best network mode...");
+
+        boolean behindNAT = NATDetector.isBehindNAT();
+        System.out.println("  - Behind NAT: " + behindNAT);
+
+        boolean upnpAvailable = false;
+        try{
+            UPnPManager upnpManager = new UPnPManager();
+            upnpAvailable = upnpManager.initialize();
+            upnpManager.close();
+            System.out.println("  - UPnP gateway available: " + upnpAvailable);
+        } catch (Exception e){
+            System.out.println("UPnP check failed: " + e.getMessage());
+        }
+
+        if (!behindNAT){
+            System.out.println("Selecting P2P mode.");
+            return ConnectionMode.P2P;
+        }
+
+        if (upnpAvailable){
+            System.out.println("Selecting P2P mode with UPnP.");
+            return ConnectionMode.P2P;
+        }
+
+        System.out.println("Selecting LAN mode.");
+        return ConnectionMode.LAN;
     }
 }
