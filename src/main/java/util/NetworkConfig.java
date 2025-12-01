@@ -8,6 +8,7 @@ import java.util.Properties;
 
 public class NetworkConfig {
     private int localPort = 8080;
+    private String username = null;
     private List<String> bootstrapPeers = new ArrayList<>();
     private String relayServerAddress = null;
     private int relayServerPort = 9090;
@@ -75,6 +76,14 @@ public class NetworkConfig {
 
     public void setLocalPort(int localPort) {
         this.localPort = localPort;
+    }
+
+    public String getUsername() {
+        return username;
+    }
+
+    public void setUsername(String username) {
+        this.username = username;
     }
 
     public List<String> getBootstrapPeers() {

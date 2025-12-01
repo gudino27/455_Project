@@ -26,6 +26,7 @@ public class Main {
 
         ConnectionMode mode = selectBestMode();
         int port = 9000;
+        String username = null;
         List<String> bootstrapPeers = new ArrayList<>();
         String relayServer = null;
         int relayPort = 9090;
@@ -40,6 +41,8 @@ public class Main {
                 } catch (NumberFormatException e) {
                     System.err.println("Invalid port number, using default: " + port);
                 }
+            } else if (args[i].equals("--name") && i + 1 < args.length) {
+                username = args[++i];
             } else if (args[i].equals("--bootstrap-peers") && i + 1 < args.length) {
                 String[] peers = args[++i].split(",");
                 for (String peer : peers) {
@@ -71,6 +74,9 @@ public class Main {
                 config.setRelayServerPort(relayPort);
             }
             config.setEnableUPnP(enableUPnP);
+            if (username != null) {
+                config.setUsername(username);
+            }
 
             NetworkManager manager = NetworkManagerFactory.createNetworkManager(mode, config);
 
@@ -96,6 +102,9 @@ public class Main {
             System.out.println("Network Application Started");
             System.out.println("Mode: " + mode);
             System.out.println("Port: " + port);
+            if (username != null) {
+                System.out.println("Username: " + username);
+            }
             if (mode == ConnectionMode.P2P && !bootstrapPeers.isEmpty()) {
                 System.out.println("Bootstrap Peers: " + bootstrapPeers);
             }

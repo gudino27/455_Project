@@ -35,7 +35,7 @@ public class P2PManager implements NetworkManager {
 
     public P2PManager(NetworkConfig config) {
         this.config = config;
-        this.localPeerId = generatePeerId();
+        this.localPeerId = generatePeerId(config.getUsername());
         try {
             this.socketServer = new SocketServer(config.getLocalPort());
         } catch (IOException e) {
@@ -607,7 +607,10 @@ public class P2PManager implements NetworkManager {
         }
     }
 
-    private String generatePeerId() {
+    private String generatePeerId(String username) {
+        if (username != null && !username.trim().isEmpty()) {
+            return username;
+        }
         return "peer-" + UUID.randomUUID().toString().substring(0, 8);
     }
 

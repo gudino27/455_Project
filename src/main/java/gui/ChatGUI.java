@@ -166,7 +166,7 @@ public class ChatGUI extends JFrame {
     
     private void showStartupDialog() {
         JDialog dialog = new JDialog(this, "Network Settings", true);
-        dialog.setSize(400, 300);
+        dialog.setSize(400, 350);
         dialog.setLocationRelativeTo(this);
         
         JPanel panel = new JPanel(new GridBagLayout());
@@ -175,36 +175,44 @@ public class ChatGUI extends JFrame {
         gbc.fill = GridBagConstraints.HORIZONTAL;
         gbc.insets = new Insets(5, 5, 5, 5);
         
+        // Username
+        gbc.gridx = 0; gbc.gridy = 0; gbc.gridwidth = 1;
+        panel.add(new JLabel("Username:"), gbc);
+        
+        JTextField usernameField = new JTextField("");
+        gbc.gridx = 1; gbc.gridy = 0; gbc.gridwidth = 2;
+        panel.add(usernameField, gbc);
+        
         // Mode selection
-        gbc.gridx = 0; gbc.gridy = 0;
+        gbc.gridx = 0; gbc.gridy = 1; gbc.gridwidth = 1;
         panel.add(new JLabel("Mode:"), gbc);
         
         JComboBox<String> modeCombo = new JComboBox<>(new String[]{"Auto-Detect", "P2P", "LAN"});
-        gbc.gridx = 1; gbc.gridy = 0; gbc.gridwidth = 2;
+        gbc.gridx = 1; gbc.gridy = 1; gbc.gridwidth = 2;
         panel.add(modeCombo, gbc);
         
         // Port
-        gbc.gridx = 0; gbc.gridy = 1; gbc.gridwidth = 1;
+        gbc.gridx = 0; gbc.gridy = 2; gbc.gridwidth = 1;
         panel.add(new JLabel("Port:"), gbc);
         
         JSpinner portSpinner = new JSpinner(new SpinnerNumberModel(9000, 1024, 65535, 1));
-        gbc.gridx = 1; gbc.gridy = 1; gbc.gridwidth = 2;
+        gbc.gridx = 1; gbc.gridy = 2; gbc.gridwidth = 2;
         panel.add(portSpinner, gbc);
         
         // Bootstrap peers
-        gbc.gridx = 0; gbc.gridy = 2; gbc.gridwidth = 1;
+        gbc.gridx = 0; gbc.gridy = 3; gbc.gridwidth = 1;
         panel.add(new JLabel("Bootstrap Peers:"), gbc);
         
         JTextField bootstrapField = new JTextField("localhost:9000");
-        gbc.gridx = 1; gbc.gridy = 2; gbc.gridwidth = 2;
+        gbc.gridx = 1; gbc.gridy = 3; gbc.gridwidth = 2;
         panel.add(bootstrapField, gbc);
         
-        gbc.gridx = 1; gbc.gridy = 3; gbc.gridwidth = 2;
+        gbc.gridx = 1; gbc.gridy = 4; gbc.gridwidth = 2;
         panel.add(new JLabel("<html><small>(comma-separated, e.g., host1:9000,host2:9001)</small></html>"), gbc);
         
         // UPnP checkbox
         JCheckBox upnpCheckbox = new JCheckBox("Enable UPnP", true);
-        gbc.gridx = 0; gbc.gridy = 4; gbc.gridwidth = 3;
+        gbc.gridx = 0; gbc.gridy = 5; gbc.gridwidth = 3;
         panel.add(upnpCheckbox, gbc);
         
         // Buttons
@@ -214,6 +222,7 @@ public class ChatGUI extends JFrame {
         startButton.addActionListener(e -> {
             dialog.dispose();
             
+            String username = usernameField.getText().trim();
             String modeStr = (String) modeCombo.getSelectedItem();
             int port = (Integer) portSpinner.getValue();
             String bootstrapStr = bootstrapField.getText().trim();
@@ -235,7 +244,7 @@ public class ChatGUI extends JFrame {
                 mode = detectBestMode();
             }
             
-            startNetwork(mode, port, bootstrapPeers, enableUPnP);
+            startNetwork(mode, port, bootstrapPeers, enableUPnP, username);
         });
         buttonPanel.add(startButton);
         
@@ -243,7 +252,7 @@ public class ChatGUI extends JFrame {
         cancelButton.addActionListener(e -> dialog.dispose());
         buttonPanel.add(cancelButton);
         
-        gbc.gridx = 0; gbc.gridy = 5; gbc.gridwidth = 3;
+        gbc.gridx = 0; gbc.gridy = 6; gbc.gridwidth = 3;
         gbc.insets = new Insets(15, 5, 5, 5);
         panel.add(buttonPanel, gbc);
         
@@ -276,7 +285,7 @@ public class ChatGUI extends JFrame {
         }
     }
     
-    private void startNetwork(ConnectionMode mode, int port, List<String> bootstrapPeers, boolean enableUPnP) {
+    private void startNetwork(ConnectionMode mode, int port, List<String> bootstrapPeers, boolean enableUPnP, String username) {
         // Stop existing connection if any
         if (manager != null) {
             try {
@@ -291,6 +300,9 @@ public class ChatGUI extends JFrame {
             config.setLocalPort(port);
             config.setBootstrapPeers(bootstrapPeers);
             config.setEnableUPnP(enableUPnP);
+            if (username != null && !username.isEmpty()) {
+                config.setUsername(username);
+            }
             
             manager = NetworkManagerFactory.createNetworkManager(mode, config);
             
@@ -322,7 +334,8 @@ public class ChatGUI extends JFrame {
             manager.start();
             
             // Update UI
-            statusLabel.setText("Connected | Mode: " + mode + " | Port: " + port);
+            String usernameInfo = (username != null && !username.isEmpty()) ? " | User: " + username : "";
+            statusLabel.setText("Connected | Mode: " + mode + " | Port: " + port + usernameInfo);
             sendButton.setEnabled(true);
             broadcastButton.setEnabled(true);
             
@@ -330,6 +343,9 @@ public class ChatGUI extends JFrame {
             appendChat("Network Started");
             appendChat("Mode: " + mode);
             appendChat("Port: " + port);
+            if (username != null && !username.isEmpty()) {
+                appendChat("Username: " + username);
+            }
             if (!bootstrapPeers.isEmpty()) {
                 appendChat("Bootstrap Peers: " + bootstrapPeers);
             }

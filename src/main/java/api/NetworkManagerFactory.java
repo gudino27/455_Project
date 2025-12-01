@@ -10,7 +10,7 @@ public class NetworkManagerFactory {
         try {
             switch (mode) {
                 case LAN:
-                    return new LANManager(config.getLocalPort());
+                    return new LANManager(config);
                 case P2P:
                     return new P2PManager(config);
                 default:

@@ -5,6 +5,7 @@ import api.NetworkManager;
 import network.protocol.Message;
 import network.socket.SocketConnection;
 import network.socket.SocketServer;
+import util.NetworkConfig;
 
 import java.io.IOException;
 import java.net.Socket;
@@ -28,9 +29,14 @@ public class LANManager implements NetworkManager {
     private final CopyOnWriteArrayList<NetworkManager.MessageListener> messageListeners;
     private final CopyOnWriteArrayList<NetworkManager.PeerConnectionListener> peerConnectionListeners;
 
-    public LANManager(int port) throws IOException {
-        this.peerId = "lan-" + UUID.randomUUID().toString().substring(0, 8);
-        this.port = port;
+    public LANManager(NetworkConfig config) throws IOException {
+        String username = config.getUsername();
+        if (username != null && !username.isEmpty()) {
+            this.peerId = username + "-" + UUID.randomUUID().toString().substring(0, 4);
+        } else {
+            this.peerId = "lan-" + UUID.randomUUID().toString().substring(0, 8);
+        }
+        this.port = config.getLocalPort();
         this.connections = new ConcurrentHashMap<>();
         this.discoveredPeers = new ConcurrentHashMap<>();
         this.messageListeners = new CopyOnWriteArrayList<>();
@@ -41,6 +47,16 @@ public class LANManager implements NetworkManager {
 
         this.discovery = new LANDiscovery(peerId, port);
         this.discovery.addListener(this::handlePeerDiscovered);
+    }
+    
+    public LANManager(int port) throws IOException {
+        this(createDefaultConfig(port));
+    }
+    
+    private static NetworkConfig createDefaultConfig(int port) {
+        NetworkConfig config = new NetworkConfig();
+        config.setLocalPort(port);
+        return config;
     }
 
     @Override
